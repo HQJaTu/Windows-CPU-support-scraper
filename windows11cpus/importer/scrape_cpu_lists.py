@@ -14,7 +14,7 @@ class CpuScraper:
     )
 
     @staticmethod
-    def scrape() -> list:
+    def scrape_win11_cpus() -> list:
         cpu_lists = []
         for url in CpuScraper.CPU_LISTS:
             r = requests.get(url)
@@ -41,8 +41,16 @@ class CpuScraper:
     @staticmethod
     def get_info(data: tuple) -> tuple:
         if data[0].startswith('Intel'):
-            return IntelInfo.get_info_for(data)
+            return IntelInfo.search_info_for(data)
         elif data[0].startswith('AMD'):
             return None
 
         raise NotImplementedError("Vendor {} not implemented yet!".format(data[0]))
+
+    @staticmethod
+    def scrape_vendors() -> list:
+        cpus = []
+        intel_cpus = IntelInfo.scrape()
+        cpus.extend(intel_cpus)
+
+        return cpus
