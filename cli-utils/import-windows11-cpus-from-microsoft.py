@@ -5,7 +5,8 @@
 import sys
 import argparse
 import pickle
-from googleapiclient.discovery import build
+from typing import Tuple
+from googleapiclient.discovery import build, Resource
 from google.oauth2 import service_account
 from windows11cpus import CpuScraper
 import logging
@@ -37,14 +38,16 @@ def scrape() -> None:
                     log.info("{}, launched at: {}".format(updated_info[0], updated_info[2]))
 
     vendor_cpus = CpuScraper.scrape_vendors()
-    with open('all-vendors-cpus.dat', 'wb') as f:
-        # Pickle the 'data' dictionary using the highest protocol available.
-        pickle.dump(vendor_cpus, f, pickle.HIGHEST_PROTOCOL)
 
 
 def upload_to_google(credentials_file: str, shared_owner_email: str):
     spreadsheet_file_name = "Vendor CPU-lists"
-    spreadsheet_title = "Intel"
+
+    # Load data from file
+    with open(CpuScraper.production_filename, 'rb') as f:
+        # Pickle the 'data' dictionary using the highest protocol available.
+        vendor_cpus = pickle.load(f)
+    spreadsheet_title = list(vendor_cpus.keys())[0]
 
     # From: https://developers.google.com/sheets/api/quickstart/python
     creds = service_account.Credentials.from_service_account_file(credentials_file)
@@ -69,32 +72,72 @@ def upload_to_google(credentials_file: str, shared_owner_email: str):
 
     # Call the Sheets API
     sheets_service = build('sheets', 'v4', credentials=creds)
+    log.info("Done setting GCP up")
+
+    # Populate the sheet
+    header_row = ('Processor Title', 'Processor Number', 'Launch', 'Family', 'URL to information')
+    value_input_option = 'USER_ENTERED'
+    for spreadsheet_title in vendor_cpus:
+        # Confirm the spreadsheet file exists and is shared.
+        # Create necessary sheets into the file, if necessary.
+        spreadsheet_id, sheet = _confirm_spreadsheet_existence(drive_service, sheets_service,
+                                                               spreadsheet_id, spreadsheet_title,
+                                                               spreadsheet_file_name, shared_owner_email)
+
+        cpu_values = [header_row] + vendor_cpus[spreadsheet_title]
+        result = sheet.values().clear(
+            spreadsheetId=spreadsheet_id, range=spreadsheet_title, body={}).execute()
+        body = {
+            'values': cpu_values
+        }
+        result = sheet.values().update(
+            spreadsheetId=spreadsheet_id, range=spreadsheet_title,
+            valueInputOption=value_input_option, body=body).execute()
+        log.debug('Sheet {}, Updated {} cells.'.format(spreadsheet_title, result.get('updatedCells')))
+
+    log.info("Done updating data")
+
+
+def _confirm_spreadsheet_existence(drive_service: Resource, sheets_service: Resource, spreadsheet_id: str,
+                                   sheet_title: str,
+                                   file_title: str, shared_owner_email: str) -> Tuple[str, Resource]:
     sheet = sheets_service.spreadsheets()
     if spreadsheet_id:
-        # Existing. Get a handle of it
-        result = sheet.values().get(spreadsheetId=spreadsheet_id, range=spreadsheet_title).execute()
-        values = result.get('values', [])
-    else:
-        # Not existing, go create!
-        # Create new
+        # Assume existing. Get a handle of it.
+        info = sheet.get(spreadsheetId=spreadsheet_id).execute()
+
+        # Metadata indicates, the sheet would exist
+        for sheet_props in info['sheets']:
+            if sheet_props['properties']['title'] == sheet_title:
+                # Try requesting the sheet. As metadata suggest, this MUST succeed.
+                result = sheet.values().get(spreadsheetId=spreadsheet_id, range=sheet_title).execute()
+
+                return spreadsheet_id, sheet
+
+    # Create entire file?
+    # Create only a new sheet into existing file?
+    if not spreadsheet_id:
+        # Not existing, go create a new one!
         # Code from: https://developers.google.com/sheets/api/guides/create#python
         # Properties defined in: https://developers.google.com/sheets/api/reference/rest/v4/spreadsheets#Spreadsheet
         create_props = {
             'properties': {
-                'title': spreadsheet_file_name
+                'title': file_title
             },
             "sheets": [
                 {
                     'properties': {
-                        'title': spreadsheet_title
+                        'title': sheet_title
                     }
                 }
             ],
         }
+
         spreadsheet = sheet.create(body=create_props,
                                    fields='spreadsheetId').execute()
         spreadsheet_id = spreadsheet.get('spreadsheetId')
         log.info('Created spreadsheet with ID: {0}'.format(spreadsheet_id))
+
         share_failed = False
 
         def _drive_callback(request_id, response, exception):
@@ -128,24 +171,24 @@ def upload_to_google(credentials_file: str, shared_owner_email: str):
             log.info("Shared created file with {} with role {}".format(shared_owner_email, role_to_set))
         else:
             log.error("Not shared the spreadsheet correctly.")
-    log.info("Done setting GCP up")
 
-    # Populate the sheet
-    vendor_cpus = None
-    with open('all-vendors-cpus.dat', 'rb') as f:
-        # Pickle the 'data' dictionary using the highest protocol available.
-        vendor_cpus = pickle.load(f)
+    else:
+        # New sheet creation code from: https://stackoverflow.com/a/67150492/1548275
+        create_props = {
+            'requests': [
+                {
+                    'addSheet': {
+                        'properties': {
+                            'title': sheet_title
+                        }
+                    }
+                }
+            ]
+        }
+        request = sheet.batchUpdate(spreadsheetId=spreadsheet_id, body=create_props)
+        response = request.execute()
 
-    value_input_option = 'USER_ENTERED'
-    body = {
-        'values': vendor_cpus
-    }
-    result = sheet.values().update(
-        spreadsheetId=spreadsheet_id, range=spreadsheet_title,
-        valueInputOption=value_input_option, body=body).execute()
-    log.debug('{0} cells updated.'.format(result.get('updatedCells')))
-
-    log.info("Done updating data")
+    return spreadsheet_id, sheet
 
 
 def main() -> None:
@@ -161,8 +204,10 @@ def main() -> None:
 
     if args.google_credentials:
         upload_to_google(args.google_credentials, args.spreadsheet_co_owner_email)
+        log.info("Done uploading.")
     else:
         scrape()
+        log.info("Done scraping.")
 
 
 if __name__ == '__main__':
