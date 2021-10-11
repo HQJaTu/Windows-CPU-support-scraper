@@ -117,7 +117,35 @@ def scrape(credentials_file: str = None, shared_owner_email: str = None) -> None
             )
             enriched_vendor_cpus[vendor].append(enriched_data)
 
-    # Done enriching --> to Google Spreadsheet
+    # Done enriching
+    quartals = {}
+    for vendor in vendor_cpus:
+        quartals[vendor] = {}
+        for cpu in enriched_vendor_cpus[vendor]:
+            if cpu[2]:
+                is_compatible = 1
+            else:
+                is_compatible = 0
+            quartal = cpu[3]
+            if not quartal:
+                continue
+            if quartal in quartals[vendor]:
+                quartals[vendor][quartal][0] += 1
+                quartals[vendor][quartal][1] += is_compatible
+            else:
+                quartals[vendor][quartal] = [1, is_compatible]
+
+    log.info("Intel CPU launches per quartal:")
+    vendor = 'Intel'
+    for quartal in sorted(quartals[vendor].keys()):
+        log.info("{}\t{}\t{}".format(quartal, quartals[vendor][quartal][0], quartals[vendor][quartal][1]))
+
+    log.info("AMD CPU launches per quartal:")
+    vendor = 'AMD'
+    for quartal in sorted(quartals[vendor].keys()):
+        log.info("{}\t{}\t{}".format(quartal, quartals[vendor][quartal][0], quartals[vendor][quartal][1]))
+
+    # --> to Google Spreadsheet
     if credentials_file and shared_owner_email:
         header_row = (
         'Processor Title', 'Processor Number', 'Win11', 'Launch', 'Launch Q', 'Family', 'URL to information')
@@ -134,7 +162,10 @@ def _parse_launch_date(launch_date_str: str) -> str:
     if match:
         quarter = int(match.group(1))
         year = 2000 + int(match.group(2))
+        if year > 2090:
+            year -= 100
         launch_date = "{}-Q{}".format(year, quarter)
+
         return launch_date
 
     match = re.search(r"^(\d{1,2})['/](\d{2})$", launch_date_in)  # 04'16, 04/16
