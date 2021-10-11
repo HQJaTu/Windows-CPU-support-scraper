@@ -16,6 +16,7 @@ class CpuScraper:
         "https://docs.microsoft.com/en-us/windows-hardware/design/minimum/supported/windows-11-supported-qualcomm-processors"
     )
 
+    data_dir = "data"
     production_filename = 'all-vendors-cpus.dat'
     intel_filename = 'intel-cpus.dat'
     amd_filename = 'amd-cpus.dat'
@@ -41,6 +42,7 @@ class CpuScraper:
                 cpu_info.append(cell.text)
             if len(cpu_info) != 3:
                 raise ValueError("Invalid data row!")
+            # Expected tuple content is: Manufacturer, Brand, Model
             cpus_out.append(tuple(cpu_info))
 
         return cpus_out
@@ -59,24 +61,26 @@ class CpuScraper:
         cpus = {}
 
         # Intel
-        if not force and os.path.exists(CpuScraper.intel_filename):
-            with open(CpuScraper.intel_filename, 'rb') as f:
+        filename = "{}/{}".format(CpuScraper.data_dir, CpuScraper.intel_filename)
+        if not force and os.path.exists(filename):
+            with open(filename, 'rb') as f:
                 intel_cpus = pickle.load(f)
         else:
             intel_cpus = IntelInfo.scrape()
-            with open(CpuScraper.intel_filename, 'wb') as f:
+            with open(filename, 'wb') as f:
                 # Pickle the 'data' dictionary using the highest protocol available.
                 pickle.dump(intel_cpus, f, pickle.HIGHEST_PROTOCOL)
         cpus['Intel'] = intel_cpus
         CpuScraper._save_cpus(cpus)
 
         # AMD
-        if not force and os.path.exists(CpuScraper.amd_filename):
-            with open(CpuScraper.amd_filename, 'rb') as f:
+        filename = "{}/{}".format(CpuScraper.data_dir, CpuScraper.amd_filename)
+        if not force and os.path.exists(filename):
+            with open(filename, 'rb') as f:
                 amd_cpus = pickle.load(f)
         else:
             amd_cpus = AmdInfo.scrape()
-            with open(CpuScraper.amd_filename, 'wb') as f:
+            with open(filename, 'wb') as f:
                 # Pickle the 'data' dictionary using the highest protocol available.
                 pickle.dump(amd_cpus, f, pickle.HIGHEST_PROTOCOL)
         cpus['AMD'] = amd_cpus
@@ -90,7 +94,7 @@ class CpuScraper:
     def _save_cpus(vendor_cpus: dict, final: bool = False) -> None:
         wip_filename = 'all-vendors-cpus-work-in-progress.dat'
         if final:
-            filename = CpuScraper.production_filename
+            filename = "{}/{}".format(CpuScraper.data_dir, CpuScraper.production_filename)
         else:
             filename = wip_filename
         with open(filename, 'wb') as f:
